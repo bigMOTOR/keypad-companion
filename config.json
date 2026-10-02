@@ -1,0 +1,32 @@
+{
+  "enabled": true,
+  "points": [
+    {
+      "screen": 0,
+      "keypad": 10
+    },
+    {
+      "screen": 25,
+      "keypad": 16
+    },
+    {
+      "screen": 40,
+      "keypad": 20
+    },
+    {
+      "screen": 50,
+      "keypad": 23
+    },
+    {
+      "screen": 75,
+      "keypad": 31
+    },
+    {
+      "screen": 100,
+      "keypad": 40
+    }
+  ],
+  "pollSeconds": 1,
+  "settleSeconds": 3,
+  "manualOverrideMinutes": 60
+}

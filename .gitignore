@@ -1,0 +1,8 @@
+status.json
+override.json
+*.log
+*.tmp
+.DS_Store
+*.app/Contents/MacOS/
+*.app/Contents/Resources/
+__pycache__/
