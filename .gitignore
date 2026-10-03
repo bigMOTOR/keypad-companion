@@ -6,3 +6,12 @@ override.json
 *.app/Contents/MacOS/
 *.app/Contents/Resources/
 __pycache__/
+ai-settings.json
+claude-quota.json
+claude-usage-status.json
+caffeine-settings.json
+.env
+.env.*
+*.key
+*.pem
+*credentials*.json

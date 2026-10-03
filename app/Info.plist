@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>Яскравість Keypad</string>
+	<string>Keypad Companion</string>
 	<key>CFBundleExecutable</key>
 	<string>KeypadBrightnessSettings</string>
 	<key>CFBundleIdentifier</key>
 	<string>local.keypad-brightness.settings</string>
 	<key>CFBundleName</key>
-	<string>Яскравість Keypad</string>
+	<string>Keypad Companion</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

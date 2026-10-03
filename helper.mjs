@@ -1,8 +1,11 @@
 import {LogiBrightnessClient} from './logi-client.mjs';
 import {defaultPoints,validatePoints,mapBrightness} from './brightness.mjs';
+import {createClaudeUsagePoller} from './claude-usage.mjs';
+import {defaultCaffeineMinutes,validateCaffeineMinutes} from './caffeine.mjs';
+import {createClaudeLogin} from './claude-login.mjs';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import {readFileSync,writeFileSync,renameSync,mkdirSync} from 'node:fs';
+import {readFileSync,writeFileSync,renameSync,mkdirSync,rmSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {join} from 'node:path';
 import {homedir} from 'node:os';
@@ -21,9 +24,29 @@ let client=null,lastApplied=null,pauseUntil=0,manualDimUntil=0,busy=false,stoppi
 try{const state=JSON.parse(readFileSync(dataFile('override.json'),'utf8'));pauseUntil=state.pauseUntil||0;manualDimUntil=state.manualDimUntil||0;}catch{}
 const saveOverride=()=>atomic('override.json',{pauseUntil,manualDimUntil});
 let status={mode:'starting',mac:null,keypad:null,target:null,error:null};
-const view=()=>({...status,points:config.points,minimum:Math.min(...config.points.map(p=>p.keypad)),maximum:Math.max(...config.points.map(p=>p.keypad)),settleSeconds:config.settleSeconds,settling:Date.now()<settlingUntil&&status.mode==='auto',pausedUntil:pauseUntil||null});
+const caffeineMinutes=()=>{try{return validateCaffeineMinutes(JSON.parse(readFileSync(dataFile('caffeine-settings.json'),'utf8')).durationMinutes);}catch{return defaultCaffeineMinutes;}};
+const claudeEnabled=()=>{try{return JSON.parse(readFileSync(dataFile('ai-settings.json'),'utf8')).claudeEnabled===true;}catch{return false;}};
+const clearClaudeQuota=()=>rmSync(dataFile('claude-quota.json'),{force:true});
+const claudeView=()=>{
+  if(!claudeEnabled())return {state:'disabled',remaining:null};
+  let state={state:'disabled'},quota=null;
+  try{state=JSON.parse(readFileSync(dataFile('claude-usage-status.json'),'utf8'));}catch{}
+  try{quota=JSON.parse(readFileSync(dataFile('claude-quota.json'),'utf8'));}catch{}
+  const valid=state.state==='ok'&&quota&&Number.isInteger(quota.remaining)&&quota.remaining>=0&&quota.remaining<=100&&quota.resetsAt*1000>Date.now()&&Date.now()-Date.parse(quota.updatedAt)<600000;
+  return {state:state.state==='ok'&&!valid?'stale':state.state,checkedAt:state.checkedAt||null,nextCheckAt:state.nextCheckAt||null,remaining:valid?quota.remaining:null};
+};
+const view=()=>({...status,points:config.points,minimum:Math.min(...config.points.map(p=>p.keypad)),maximum:Math.max(...config.points.map(p=>p.keypad)),settleSeconds:config.settleSeconds,settling:Date.now()<settlingUntil&&status.mode==='auto',pausedUntil:pauseUntil||null,caffeineMinutes:caffeineMinutes(),claude:{...claudeView(),login:claudeLogin.view()}});
 const publish=()=>atomic('status.json',{...view(),updatedAt:new Date().toISOString()});
 const run=promisify(execFile);
+const privateAtomic=(name,value)=>{writeFileSync(dataFile(name+'.tmp'),JSON.stringify(value),{mode:0o600});renameSync(dataFile(name+'.tmp'),dataFile(name));};
+const claudeUsage=createClaudeUsagePoller({
+  enabled:claudeEnabled,
+  clearQuota:clearClaudeQuota,
+  fetchUsage:async()=>{const {stdout}=await run('/usr/bin/python3',[fileURLToPath(codeFile('claude-weekly-usage.py'))],{encoding:'utf8',timeout:25000,maxBuffer:16384});return JSON.parse(stdout);},
+  saveQuota:value=>privateAtomic('claude-quota.json',value),
+  saveStatus:value=>privateAtomic('claude-usage-status.json',value)
+});
+const claudeLogin=createClaudeLogin({cwd:dataRoot,onSuccess:async()=>{privateAtomic('ai-settings.json',{claudeEnabled:true});return await claudeUsage.tick(true);}});
 async function tick(force=false){
   if(busy||stopping)return;
   busy=true;
@@ -60,12 +83,25 @@ const server=createServer(async(req,res)=>{
   const json=value=>{res.setHeader('Content-Type','application/json');res.end(JSON.stringify(value));};
   if(req.method==='GET'&&req.url==='/'){res.setHeader('Content-Type','text/html; charset=utf-8');res.end(readFileSync(codeFile('settings.html'),'utf8').replace('CSRF_TOKEN',csrf));return;}
   if(req.method==='GET'&&req.url==='/status'){json(view());return;}
-  if(req.method==='POST'&&['/mode','/settings'].includes(req.url)){
+  if(req.method==='POST'&&['/mode','/settings','/caffeine/settings','/claude/refresh','/claude/login','/claude/login/cancel','/claude/disable','/claude/enable'].includes(req.url)){
     if(req.headers.origin!==origin||req.headers['x-keypad-token']!==csrf){res.writeHead(403);res.end();return;}
     let body='';for await(const chunk of req){body+=chunk;if(body.length>4096){res.writeHead(413);res.end();return;}}
     let input;try{input=JSON.parse(body);}catch{res.writeHead(400);json({error:'Некоректні дані.'});return;}
     try{
-      if(req.url==='/settings'){
+      if(req.url==='/caffeine/settings'){
+        privateAtomic('caffeine-settings.json',{durationMinutes:validateCaffeineMinutes(input.durationMinutes)});
+        json({ok:true});return;
+      }else if(req.url==='/claude/login'){
+        const login=claudeLogin.start();if(!login.available)throw new Error('Встанови Claude Code, щоб увійти.');json({ok:true,login});return;
+      }else if(req.url==='/claude/login/cancel'){
+        json({ok:true,login:claudeLogin.cancel()});return;
+      }else if(req.url==='/claude/enable'){
+        privateAtomic('ai-settings.json',{claudeEnabled:true});const result=await claudeUsage.tick(true);json({ok:true,...result});return;
+      }else if(req.url==='/claude/disable'){
+        claudeLogin.cancel();privateAtomic('ai-settings.json',{claudeEnabled:false});clearClaudeQuota();rmSync(dataFile('claude-usage-status.json'),{force:true});json({ok:true});return;
+      }else if(req.url==='/claude/refresh'){
+        const result=await claudeUsage.tick(true);json({ok:true,...result});return;
+      }else if(req.url==='/settings'){
         const points=validatePoints(input.points);
         if(!Number.isInteger(input.settleSeconds)||input.settleSeconds<0||input.settleSeconds>10)throw new Error('Затримка: 0–10 секунд.');
         while(busy)await new Promise(r=>setTimeout(r,25));
@@ -85,6 +121,6 @@ const server=createServer(async(req,res)=>{
 });
 server.on('error',e=>{console.error('Settings panel:',e.message);});
 server.listen(57973,'127.0.0.1');
-process.on('SIGTERM',()=>{stopping=true;client?.close();server.close();process.exit(0);});
-process.on('SIGINT',()=>{stopping=true;client?.close();server.close();process.exit(0);});
-publish();void tick();setInterval(()=>void tick(),1000);
+process.on('SIGTERM',()=>{stopping=true;claudeLogin.stop();claudeUsage.stop();client?.close();server.close();process.exit(0);});
+process.on('SIGINT',()=>{stopping=true;claudeLogin.stop();claudeUsage.stop();client?.close();server.close();process.exit(0);});
+publish();void tick();void claudeUsage.tick();setInterval(()=>{void tick();void claudeUsage.tick();},1000);
