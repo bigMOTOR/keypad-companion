@@ -1,7 +1,7 @@
 import {LogiBrightnessClient} from './logi-client.mjs';
 import {defaultPoints,validatePoints,mapBrightness} from './brightness.mjs';
 import {createBrightnessCache} from './brightness-cache.mjs';
-import {createClaudeUsagePoller} from './claude-usage.mjs';
+import {createClaudeUsagePoller,claudeUsageView} from './claude-usage.mjs';
 import {defaultCaffeineMinutes,validateCaffeineMinutes} from './caffeine.mjs';
 import {createLogitechMonitor} from './logitech-monitor.mjs';
 import {createLogitechRestarter} from './logitech-restart.mjs';
@@ -35,8 +35,7 @@ const claudeView=()=>{
   let state={state:'disabled'},quota=null;
   try{state=JSON.parse(readFileSync(dataFile('claude-usage-status.json'),'utf8'));}catch{}
   try{quota=JSON.parse(readFileSync(dataFile('claude-quota.json'),'utf8'));}catch{}
-  const valid=state.state==='ok'&&quota&&Number.isInteger(quota.remaining)&&quota.remaining>=0&&quota.remaining<=100&&quota.resetsAt*1000>Date.now()&&Date.now()-Date.parse(quota.updatedAt)<600000;
-  return {state:state.state==='ok'&&!valid?'stale':state.state,checkedAt:state.checkedAt||null,nextCheckAt:state.nextCheckAt||null,remaining:valid?quota.remaining:null};
+  return claudeUsageView({enabled:true,status:state,quota});
 };
 const view=()=>({...status,points:config.points,minimum:Math.min(...config.points.map(p=>p.keypad)),maximum:Math.max(...config.points.map(p=>p.keypad)),settleSeconds:config.settleSeconds,settling:Date.now()<settlingUntil&&status.mode==='auto',pausedUntil:pauseUntil||null,caffeineMinutes:caffeineMinutes(),logitech:{...logitechMonitor.view(),restart:logitechRestarter.view()},claude:{...claudeView(),login:claudeLogin.view()}});
 const publish=()=>atomic('status.json',{...view(),updatedAt:new Date().toISOString()});
@@ -49,11 +48,12 @@ const logitechRestarter=createLogitechRestarter({onSuccess:async()=>{client?.clo
 const claudeUsage=createClaudeUsagePoller({
   enabled:claudeEnabled,
   clearQuota:clearClaudeQuota,
+  readQuota:()=>{try{return JSON.parse(readFileSync(dataFile('claude-quota.json'),'utf8'));}catch{return null;}},
   fetchUsage:async()=>{const {stdout}=await run('/usr/bin/python3',[fileURLToPath(codeFile('claude-weekly-usage.py'))],{encoding:'utf8',timeout:75000,maxBuffer:16384});return JSON.parse(stdout);},
   saveQuota:value=>privateAtomic('claude-quota.json',value),
   saveStatus:value=>privateAtomic('claude-usage-status.json',value)
 });
-const claudeLogin=createClaudeLogin({cwd:dataRoot,onSuccess:async()=>{privateAtomic('ai-settings.json',{claudeEnabled:true});return await claudeUsage.tick(true);}});
+const claudeLogin=createClaudeLogin({cwd:dataRoot,onSuccess:async()=>{clearClaudeQuota();privateAtomic('ai-settings.json',{claudeEnabled:true});return await claudeUsage.tick(true);}});
 async function tick(force=false){
   if(busy||stopping)return;
   busy=true;

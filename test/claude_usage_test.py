@@ -32,6 +32,14 @@ class UsageTests(unittest.TestCase):
     def test_bad_reset_and_milliseconds_are_rejected(self):
         for reset in [None,True,1893456000,1893542400000]:
             with self.assertRaises(ValueError):usage.allowance({'seven_day':{'utilization':82,'resets_at':reset}},1893456000)
+    def test_temporary_http_failure_preserves_provider_cooldown_only(self):
+        for code in [429, 503]:
+            error=usage.urllib.error.HTTPError(usage.USAGE_URL, code, 'private body', {'Retry-After':'600'}, None)
+            self.assertEqual(usage.usage_error(error), {'error':'usage_unavailable','retryAfterSeconds':600})
+        error=usage.urllib.error.HTTPError(usage.USAGE_URL, 401, 'private body', {}, None)
+        self.assertEqual(usage.usage_error(error), {'error':'sign_in_required'})
+        error=usage.urllib.error.HTTPError(usage.USAGE_URL, 429, 'private body', {'Retry-After':'private'}, None)
+        self.assertEqual(usage.usage_error(error), {'error':'usage_unavailable'})
     def test_bearer_is_never_redirected(self):
         with self.assertRaises(usage.urllib.error.HTTPError):
             usage.NoRedirect().redirect_request(SimpleNamespace(full_url=usage.USAGE_URL),None,302,'redirect',{},'https://other.example')

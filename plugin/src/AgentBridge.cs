@@ -103,6 +103,7 @@ internal static class AgentBridge
     private static DateTime claudeQuotaAfter;
     private static int? claudeRemaining;
     private static long claudeReset;
+    private static bool claudeStale;
     private static DateTimeOffset claudeUpdated;
     internal static void InvalidateClaude()=>claudeQuotaAfter=DateTime.MinValue;
     public static AgentView Claude()
@@ -121,9 +122,9 @@ internal static class AgentBridge
                 var file=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),"Library","Application Support","KeypadBrightness","claude-quota.json");
                 if(!File.Exists(file))file=Path.Combine(StateDirectory,"claude-quota.json");
                 if(File.Exists(file)){using var doc=JsonDocument.Parse(File.ReadAllText(file));var d=doc.RootElement;
-                    claudeReset=d.GetProperty("resetsAt").GetInt64();claudeUpdated=d.GetProperty("updatedAt").GetDateTimeOffset();claudeRemaining=d.GetProperty("remaining").GetInt32();}
+                    claudeReset=d.GetProperty("resetsAt").GetInt64();claudeUpdated=d.GetProperty("updatedAt").GetDateTimeOffset();claudeRemaining=d.GetProperty("remaining").GetInt32();claudeStale=d.TryGetProperty("stale",out var stale)&&stale.ValueKind==JsonValueKind.True;}
             }
-            if(claudeRemaining.HasValue&&claudeReset>DateTimeOffset.UtcNow.ToUnixTimeSeconds())return new(state=="Working"?"work":DateTimeOffset.UtcNow-claudeUpdated>TimeSpan.FromMinutes(10)?"stale":"idle",claudeRemaining,id);
+            if(claudeRemaining is >=0 and <=100&&claudeReset>DateTimeOffset.UtcNow.ToUnixTimeSeconds()&&DateTimeOffset.UtcNow-claudeUpdated>=TimeSpan.FromMinutes(-1)&&DateTimeOffset.UtcNow-claudeUpdated<=TimeSpan.FromMinutes(30))return new(state=="Working"?"work":claudeStale||DateTimeOffset.UtcNow-claudeUpdated>=TimeSpan.FromMinutes(10)?"stale":"idle",claudeRemaining,id);
             return new(state == "Working" ? "work" : "unknown", SessionId: id);
         }
         catch { return new("unknown"); }

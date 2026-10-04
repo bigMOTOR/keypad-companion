@@ -108,6 +108,16 @@ def read_usage():
     return allowance(payload, time.time())
 
 
+def usage_error(error):
+    result = {'error': 'sign_in_required' if error.code == 401 else 'access_denied' if error.code == 403 else 'usage_unavailable'}
+    # A provider cooldown is numeric only; never expose response bodies or headers.
+    if error.code in (429, 503):
+        value = (error.headers or {}).get('Retry-After', '')
+        if isinstance(value, str) and value.isascii() and value.isdigit() and len(value) <= 8:
+            result['retryAfterSeconds'] = max(60, min(86400, int(value)))
+    return result
+
+
 if __name__ == '__main__':
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(SystemExit(0)))
     try:
@@ -115,7 +125,7 @@ if __name__ == '__main__':
     except AuthError as e:
         result = {'error': e.code}
     except urllib.error.HTTPError as e:
-        result = {'error': 'sign_in_required' if e.code == 401 else 'access_denied' if e.code == 403 else 'usage_unavailable'}
+        result = usage_error(e)
     except Exception:
         # Exception messages can contain request/credential data: never print them.
         result = {'error': 'usage_unavailable'}
