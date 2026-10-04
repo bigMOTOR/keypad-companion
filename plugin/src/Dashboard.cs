@@ -46,18 +46,25 @@ internal static class Dashboard
     private static readonly object gate = new();
     private static readonly CancellationTokenSource stopping=new();
     internal static void Stop()=>stopping.Cancel();
+    private static int invalidated=1;
+    internal static void Invalidate(){Interlocked.Exchange(ref invalidated,1);TileSignals.Raise(TileGroup.Dashboard);}
+    internal static int NextTileRefreshMilliseconds=>current.Recording||DateTime.UtcNow<noticeUntil?1000:60000;
     private static DateTime nextRefresh;
     private static int refreshing, acting;
     private static DashboardSnapshot current = new();
+    private static DateTime sampledAt;
+    private static long nativeReads;
+    internal static Func<DashboardSnapshot> SnapshotReader=MacDashboard.Snapshot;
+    internal static string StateDirectory=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),"Library","Application Support","KeypadBrightness");
     private static string notice;
     private static int noticeSlot;
     private static DateTime noticeUntil;
     private static bool reportedError;
     internal static DashboardSnapshot Read()
     {
-        if (!stopping.IsCancellationRequested && DateTime.UtcNow >= nextRefresh && Interlocked.CompareExchange(ref refreshing, 1, 0) == 0)
-            _ = Task.Run(() => { try { lock(gate) { using var doc=Native(false); current=Parse(doc.RootElement); Publish(); } } catch(Exception e) { if(!reportedError) { reportedError=true; PluginLog.Error("Dashboard: "+e.GetType().Name+" "+e.Message); } } finally { nextRefresh=DateTime.UtcNow.AddMilliseconds(650); Interlocked.Exchange(ref refreshing,0); } });
-        return current;
+        if (!stopping.IsCancellationRequested && (Volatile.Read(ref invalidated)!=0 || DateTime.UtcNow >= nextRefresh) && Interlocked.CompareExchange(ref refreshing, 1, 0) == 0)
+            _ = Task.Run(() => { Interlocked.Exchange(ref invalidated,0); try { lock(gate) { using var doc=Native(false); Interlocked.Increment(ref nativeReads);current=Parse(doc.RootElement);sampledAt=DateTime.UtcNow; Publish(); } } catch(Exception e) { if(!reportedError) { reportedError=true; PluginLog.Error("Dashboard: "+e.GetType().Name+" "+e.Message); } } finally { nextRefresh=DateTime.UtcNow.AddMinutes(1); Interlocked.Exchange(ref refreshing,0);TileSignals.Raise(TileGroup.Dashboard); } });
+        return current.Recording ? current with { Seconds=current.Seconds+(int)Math.Max(0,(DateTime.UtcNow-sampledAt).TotalSeconds) } : current;
     }
     internal static DashboardTile Tile(int slot) => DashboardLayout.Tiles(Read())[slot];
     internal static string Notice(int slot) => slot == noticeSlot && DateTime.UtcNow < noticeUntil ? notice : null;
@@ -75,26 +82,27 @@ internal static class Dashboard
                     using var result=Native(true,tile.Action);
                     notice=result.RootElement.TryGetProperty("message",out var message)?message.GetString():"";
                     PluginLog.Info("Dashboard "+tile.Action+": "+notice);
+                    if(tile.Action=="capture")MacStateEvents.TrackCapture();
                     if(tile.Action=="new-meet"){try{var file=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),"Library","Application Support","KeypadBrightness","meet-result.json");File.WriteAllText(file,JsonSerializer.Serialize(new{message=notice,updatedAt=DateTime.UtcNow}));}catch{}}
                     noticeSlot=slot; noticeUntil=DateTime.UtcNow.AddSeconds(6); nextRefresh=DateTime.MinValue; Publish();
                 }
             } catch { noticeSlot=slot; notice="Дія недоступна"; noticeUntil=DateTime.UtcNow.AddSeconds(6); }
-            finally { Interlocked.Exchange(ref acting,0); }
+            finally { Interlocked.Exchange(ref acting,0);Invalidate(); }
         });
     }
     private static string lastPublished;
     private static void Publish()
     {
-        var body=JsonSerializer.Serialize(new { context=current.Context,recording=current.Recording,seconds=current.Seconds,mic=current.Mic,camera=current.Camera,sharing=current.Sharing,trusted=current.Trusted,preview=current.Preview,notice=DateTime.UtcNow<noticeUntil?notice:null,tiles=DashboardLayout.Tiles(current).Select(t=>t.Image) });
+        var body=JsonSerializer.Serialize(new { scheduling=new { nativeReads=Interlocked.Read(ref nativeReads),recoverySeconds=60,events=MacStateEvents.Diagnostics }, context=current.Context,recording=current.Recording,seconds=current.Seconds,mic=current.Mic,camera=current.Camera,sharing=current.Sharing,trusted=current.Trusted,preview=current.Preview,notice=DateTime.UtcNow<noticeUntil?notice:null,tiles=DashboardLayout.Tiles(current).Select(t=>t.Image) });
         if(body==lastPublished)return;
-        var directory=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),"Library","Application Support","KeypadBrightness");
+        var directory=StateDirectory;
         Directory.CreateDirectory(directory);
         var file=Path.Combine(directory,"dashboard-state.json");
         File.WriteAllText(file+".tmp",body);File.Move(file+".tmp",file,true);lastPublished=body;
     }
     private static JsonDocument Native(bool execute, string action = null)
     {
-        return execute ? JsonSerializer.SerializeToDocument(new { message=MacDashboard.Execute(action,stopping.Token) }) : JsonSerializer.SerializeToDocument(MacDashboard.Snapshot(), new JsonSerializerOptions { PropertyNamingPolicy=JsonNamingPolicy.CamelCase });
+        return execute ? JsonSerializer.SerializeToDocument(new { message=MacDashboard.Execute(action,stopping.Token) }) : JsonSerializer.SerializeToDocument(SnapshotReader(), new JsonSerializerOptions { PropertyNamingPolicy=JsonNamingPolicy.CamelCase });
     }
 
     internal static DashboardSnapshot Parse(JsonElement e)

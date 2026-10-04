@@ -47,6 +47,27 @@ Check(memory.Merge("meeting-a",now.AddSeconds(3),null,null,null).Mic==null,"Expi
 Check(memory.Merge("meeting-b",now.AddSeconds(3),null,null,null)==(null,null,null),"Call state leaked into a different meeting");
 Console.WriteLine("Calls: actual Meet/Zoom labels, non-toggle exclusion, independent redraw recovery and cross-meeting isolation passed.");
 
+Dashboard.StateDirectory=Path.Combine(Path.GetTempPath(),"keypad-scheduling-test-"+Guid.NewGuid());
+var reads=0;
+Dashboard.SnapshotReader=()=>{Interlocked.Increment(ref reads);return new(Context:"general");};
+for(var i=0;i<100;i++)Dashboard.Read();
+for(var i=0;i<100&&Volatile.Read(ref reads)==0;i++)Thread.Sleep(10);
+Thread.Sleep(100);Check(reads==1,"Concurrent tiles caused repeated native snapshots");
+for(var i=0;i<100;i++)Dashboard.Read();Thread.Sleep(100);Check(reads==1,"Idle reads bypassed one-minute cache");
+Dashboard.SnapshotReader=()=>{Interlocked.Increment(ref reads);return new(Context:"meet",Mic:false,Camera:true);};
+Dashboard.Invalidate();Dashboard.Read();
+for(var i=0;i<100&&Dashboard.Read().Context!="meet";i++)Thread.Sleep(10);
+Check(reads==2&&Dashboard.Read().Mic==false,"Event invalidation failed to update meeting state");
+Thread.Sleep(2100);Dashboard.Read();Thread.Sleep(100);Check(reads==2,"Calls still polled every two seconds");
+Console.WriteLine("Scheduling: one shared snapshot for concurrent tiles; idle and call reads cached; event invalidation refreshes immediately.");
+foreach(var (seconds,total,min,max) in new (double,int,int,int)[]{(7200,7200,35000,37000),(7190,7200,25000,27000),(7140,7200,47000,49000),(0,7200,1000,1000)}){
+ var delay=RefreshPolicy.CoffeeDelay(seconds,total);Check(delay>=min&&delay<=max,"Coffee display boundary scheduling failed");
+}
+Console.WriteLine("Coffee: minute and progress boundaries avoid unnecessary per-second checks.");
+Dashboard.Stop();Directory.Delete(Dashboard.StateDirectory,true);
+
 namespace Loupedeck.MotorControlsPlugin { internal static class PluginLog { internal static void Error(string message){} internal static void Info(string message){} } }
 
 namespace Loupedeck.MotorControlsPlugin { internal class MotorControlsPlugin { internal static MotorControlsPlugin Current => null; internal Loupedeck.KeyboardApi KeyboardApi => null; } }
+
+namespace Loupedeck.MotorControlsPlugin { [Flags] internal enum TileGroup { Dashboard=1 } internal static class TileSignals { internal static void Raise(TileGroup group){} } }

@@ -44,6 +44,14 @@ public sealed class CaffeinateController : IDisposable
         }
     }
 
+    internal int NextImageChangeMilliseconds
+    {
+        get { lock(gate) {
+            if(ownedProcess==null||ownedProcess.HasExited)return 60000;
+            return RefreshPolicy.CoffeeDelay((deadline-DateTimeOffset.UtcNow).TotalSeconds,durationSeconds);
+        } }
+    }
+
     public void Toggle(int? seconds = null)
     {
         lock (gate)
@@ -76,6 +84,8 @@ public sealed class CaffeinateController : IDisposable
                 start.ArgumentList.Add("-w");
                 start.ArgumentList.Add(Environment.ProcessId.ToString());
                 ownedProcess = Process.Start(start);
+                ownedProcess.EnableRaisingEvents=true;
+                ownedProcess.Exited+=(_,_)=>TileSignals.Raise(TileGroup.Coffee);
                 deadline = restoreDeadline ?? DateTimeOffset.UtcNow.AddSeconds(seconds);
                 durationSeconds = total;
                 // An invalid command can exit immediately. Never report that as ON.

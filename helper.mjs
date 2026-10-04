@@ -1,5 +1,6 @@
 import {LogiBrightnessClient} from './logi-client.mjs';
 import {defaultPoints,validatePoints,mapBrightness} from './brightness.mjs';
+import {createBrightnessCache} from './brightness-cache.mjs';
 import {createClaudeUsagePoller} from './claude-usage.mjs';
 import {defaultCaffeineMinutes,validateCaffeineMinutes} from './caffeine.mjs';
 import {createLogitechMonitor} from './logitech-monitor.mjs';
@@ -40,9 +41,11 @@ const claudeView=()=>{
 const view=()=>({...status,points:config.points,minimum:Math.min(...config.points.map(p=>p.keypad)),maximum:Math.max(...config.points.map(p=>p.keypad)),settleSeconds:config.settleSeconds,settling:Date.now()<settlingUntil&&status.mode==='auto',pausedUntil:pauseUntil||null,caffeineMinutes:caffeineMinutes(),logitech:{...logitechMonitor.view(),restart:logitechRestarter.view()},claude:{...claudeView(),login:claudeLogin.view()}});
 const publish=()=>atomic('status.json',{...view(),updatedAt:new Date().toISOString()});
 const run=promisify(execFile);
+const brightnessCache=createBrightnessCache();
+let observedScreen=null;
 const privateAtomic=(name,value)=>{writeFileSync(dataFile(name+'.tmp'),JSON.stringify(value),{mode:0o600});renameSync(dataFile(name+'.tmp'),dataFile(name));};
 const logitechMonitor=createLogitechMonitor({save:value=>privateAtomic('logitech-health.json',value)});
-const logitechRestarter=createLogitechRestarter({onSuccess:async()=>{client?.close();client=null;lastApplied=null;logitechMonitor.reset();await logitechMonitor.tick();}});
+const logitechRestarter=createLogitechRestarter({onSuccess:async()=>{client?.close();client=null;lastApplied=null;brightnessCache.reset();logitechMonitor.reset();await logitechMonitor.tick();}});
 const claudeUsage=createClaudeUsagePoller({
   enabled:claudeEnabled,
   clearQuota:clearClaudeQuota,
@@ -59,8 +62,9 @@ async function tick(force=false){
     const {stdout}=await run('/usr/bin/python3',[fileURLToPath(codeFile('display-brightness.py'))],{encoding:'utf8',timeout:3000});
     const display=JSON.parse(stdout);
     status.mac=display.available?Math.round(display.brightness*100):null;
-    if(!client||client.ws.readyState!==1){client?.close();client=await LogiBrightnessClient.connect();lastApplied=null;}
-    const current=await client.read();status.keypad=current;
+    if(!client||client.ws.readyState!==1){client?.close();client=await LogiBrightnessClient.connect();lastApplied=null;brightnessCache.reset();}
+    const screenChanged=status.mac!==observedScreen;observedScreen=status.mac;
+    const current=await brightnessCache.read(()=>client.read(),force||screenChanged);status.keypad=current;
     if(lastApplied!==null&&current!==lastApplied&&config.enabled){pauseUntil=Date.now()+config.manualOverrideMinutes*60000;manualDimUntil=0;lastApplied=null;saveOverride();}
     if(!config.enabled){status.mode='paused';status.target=null;status.error=null;publish();return;}
     if(Date.now()<pauseUntil){status.mode='manual';status.target=null;status.error=null;publish();return;}
@@ -70,12 +74,16 @@ async function tick(force=false){
     const target=dim?Math.min(...config.points.map(p=>p.keypad)):mapBrightness(status.mac,config.points);
     status.target=target;status.mode=dim?'dim-until-morning':'auto';
     if(force||dim||Date.now()>=settlingUntil){
-      if(target!==current){status.keypad=await client.set(target);}
+      if(target!==current){
+        const actual=await brightnessCache.read(()=>client.read(),true);
+        if(lastApplied!==null&&actual!==lastApplied&&config.enabled){pauseUntil=Date.now()+config.manualOverrideMinutes*60000;manualDimUntil=0;lastApplied=null;saveOverride();status.keypad=actual;status.mode='manual';status.target=null;status.error=null;publish();return;}
+        status.keypad=actual===target?actual:brightnessCache.update(await client.set(target));
+      }
       lastApplied=status.keypad;
       if(force)settlingUntil=0;
     }
     status.error=null;publish();
-  }catch(error){status.mode='waiting';status.error=error.message;publish();client?.close();client=null;}
+  }catch(error){status.mode='waiting';status.error=error.message;publish();client?.close();client=null;brightnessCache.reset();}
   finally{busy=false;}
 }
 const csrf=randomBytes(24).toString('hex');

@@ -30,7 +30,7 @@ if not app.exists():
 shutil.copy2(source / 'app/Info.plist', app / 'Contents/Info.plist')
 resources = app / 'Contents/Resources'
 resources.mkdir(parents=True, exist_ok=True)
-for name in ['helper.mjs', 'brightness.mjs', 'logi-client.mjs', 'display-brightness.py', 'settings.html', 'claude-usage.mjs', 'claude-weekly-usage.py', 'caffeine.mjs', 'claude-login.mjs', 'logitech-monitor.mjs', 'logitech-restart.mjs', 'claude_auth.py']:
+for name in ['helper.mjs', 'brightness.mjs', 'brightness-cache.mjs', 'logi-client.mjs', 'display-brightness.py', 'settings.html', 'claude-usage.mjs', 'claude-weekly-usage.py', 'caffeine.mjs', 'claude-login.mjs', 'logitech-monitor.mjs', 'logitech-restart.mjs', 'claude_auth.py']:
     shutil.copy2(source / name, resources / name)
 shutil.copytree(source / 'lib', resources / 'lib', dirs_exist_ok=True)
 executable = app / 'Contents/MacOS/KeypadBrightnessSettings'

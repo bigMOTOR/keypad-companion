@@ -152,3 +152,9 @@ Browser automation can stop if you change the active window during the operation
 When usage checks are enabled, the helper renews an expiring access token within five minutes of expiry, or once after a usage HTTP 401. It sends the existing refresh token only to the fixed official Anthropic OAuth endpoint, using the original scopes and public Claude Code client ID. This makes no model requests and incurs no inference usage.
 
 Rotated tokens update only the existing Claude Code entry in macOS Keychain, never files, logs or the repository. The helper respects both current and legacy Claude Code refresh locks, maintains a heartbeat and checks that the login has not changed before saving. Disabling usage checks also stops automatic renewal. Transient failures retry in five minutes; contention retries in one minute. A revoked refresh token requires signing in again. This integration depends on an internal provider protocol and may need updates when Claude Code changes.
+
+## Event-driven Keypad updates
+
+The plugin uses macOS workspace/window notifications and local file notifications, with a one-minute recovery check for contextual layout, call states, recording detection and PrusaSlicer. Actions validate fresh state before execution. If an application does not send a supported Accessibility notification, direct UI changes can take up to one minute to appear. The recording counter advances locally; Caffeinate refreshes only at displayed minute/progress boundaries or process exit. See [plugin scheduling](plugin/README.md#update-scheduling) for the remaining in-memory Claude registry checks.
+
+Mac screen brightness is still sampled once per second. Idle Logitech device-setting reads are cached for one minute; screen brightness changes, explicit actions and writes force fresh verification. This adds no service or permission and does not change the brightness mapping or configured settle delay.

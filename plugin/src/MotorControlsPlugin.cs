@@ -28,6 +28,8 @@ namespace Loupedeck.MotorControlsPlugin
         // This method is called when the plugin is loaded.
         public override void Load()
         {
+            TileFileEvents.Start();
+            MacStateEvents.Start();
             ClaudeQuotaInstaller.Start();
             System.Threading.Tasks.Task.Run(()=>{try{MacDashboard.SaveMeetCapabilities();MacDashboard.SaveCallCapabilities();}catch{}});
         }
@@ -35,6 +37,8 @@ namespace Loupedeck.MotorControlsPlugin
         // This method is called when the plugin is unloaded.
         public override void Unload()
         {
+            MacStateEvents.Stop();
+            TileFileEvents.Stop();
             Dashboard.Stop();
             ClaudeQuotaInstaller.Stop();
             foreach (var poller in Pollers) poller.Dispose();

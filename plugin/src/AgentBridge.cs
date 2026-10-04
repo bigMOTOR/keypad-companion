@@ -35,12 +35,13 @@ internal static class AgentBridge
     private static object Prop(object obj, string name) => obj?.GetType().GetProperty(name, Inst)?.GetValue(obj);
     private static object Service(Plugin plugin, string type) => plugin?.GetType().GetFields(Inst).FirstOrDefault(f => f.FieldType.Name == type)?.GetValue(plugin);
     private static AgentView gptCached = new("unknown");
-    private static int readingGpt;
+    private static int readingGpt,gptGeneration;
     private static DateTime readGptAfter;
+    internal static void InvalidateGpt(){Interlocked.Increment(ref gptGeneration);readGptAfter=DateTime.MinValue;}
     public static AgentView Gpt()
     {
         if(DateTime.UtcNow>=readGptAfter&&Interlocked.CompareExchange(ref readingGpt,1,0)==0)
-            _=Task.Run(()=>{try{gptCached=ReadGpt();}finally{readGptAfter=DateTime.UtcNow.AddMilliseconds(650);Interlocked.Exchange(ref readingGpt,0);}});
+            _=Task.Run(()=>{var generation=Volatile.Read(ref gptGeneration);try{gptCached=ReadGpt();}finally{readGptAfter=generation==Volatile.Read(ref gptGeneration)?DateTime.UtcNow.AddMinutes(1):DateTime.MinValue;TileSignals.Raise(TileGroup.Gpt);Interlocked.Exchange(ref readingGpt,0);}});
         return gptCached;
     }
     private static AgentView ReadGpt()
@@ -81,7 +82,7 @@ internal static class AgentBridge
             finally { if (!p.HasExited) p.Kill(entireProcessTree: true); }
         }
         catch { /* Never show fabricated data. A cached value becomes visibly stale. */ }
-        finally { nextRefresh = DateTimeOffset.UtcNow.AddMinutes(2); Interlocked.Exchange(ref refreshing, 0); }
+        finally { nextRefresh = DateTimeOffset.UtcNow.AddMinutes(2); Interlocked.Exchange(ref refreshing, 0);InvalidateGpt();TileSignals.Raise(TileGroup.Gpt); }
     }
     private static async Task<JsonDocument> Response(Process p, int id, CancellationToken token)
     {
@@ -99,6 +100,11 @@ internal static class AgentBridge
                 return ((int)Math.Round(Math.Clamp(100 - used.GetDouble(), 0, 100), MidpointRounding.AwayFromZero), w.TryGetProperty("resetsAt", out var end) ? end.GetInt64() : 0);
         return (null, 0);
     }
+    private static DateTime claudeQuotaAfter;
+    private static int? claudeRemaining;
+    private static long claudeReset;
+    private static DateTimeOffset claudeUpdated;
+    internal static void InvalidateClaude()=>claudeQuotaAfter=DateTime.MinValue;
     public static AgentView Claude()
     {
         try
@@ -110,10 +116,14 @@ internal static class AgentBridge
             var id = Prop(selected, "SessionId") as string;
             var state = Prop(selected, "EffectiveStatus")?.ToString();
 
-            var file = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Library", "Application Support", "KeypadBrightness", "claude-quota.json");
-            if (!File.Exists(file)) file = Path.Combine(StateDirectory, "claude-quota.json");
-            if (File.Exists(file)) { using var doc = JsonDocument.Parse(File.ReadAllText(file)); var d = doc.RootElement;
-                if (d.GetProperty("resetsAt").GetInt64() > DateTimeOffset.UtcNow.ToUnixTimeSeconds()) return new(state == "Working" ? "work" : DateTimeOffset.UtcNow - d.GetProperty("updatedAt").GetDateTimeOffset() > TimeSpan.FromMinutes(10) ? "stale" : "idle", d.GetProperty("remaining").GetInt32(), id); }
+            if(DateTime.UtcNow>=claudeQuotaAfter) {
+                claudeQuotaAfter=DateTime.UtcNow.AddMinutes(1);claudeRemaining=null;
+                var file=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),"Library","Application Support","KeypadBrightness","claude-quota.json");
+                if(!File.Exists(file))file=Path.Combine(StateDirectory,"claude-quota.json");
+                if(File.Exists(file)){using var doc=JsonDocument.Parse(File.ReadAllText(file));var d=doc.RootElement;
+                    claudeReset=d.GetProperty("resetsAt").GetInt64();claudeUpdated=d.GetProperty("updatedAt").GetDateTimeOffset();claudeRemaining=d.GetProperty("remaining").GetInt32();}
+            }
+            if(claudeRemaining.HasValue&&claudeReset>DateTimeOffset.UtcNow.ToUnixTimeSeconds())return new(state=="Working"?"work":DateTimeOffset.UtcNow-claudeUpdated>TimeSpan.FromMinutes(10)?"stale":"idle",claudeRemaining,id);
             return new(state == "Working" ? "work" : "unknown", SessionId: id);
         }
         catch { return new("unknown"); }

@@ -1,6 +1,8 @@
 namespace Loupedeck.MotorControlsPlugin;
 public abstract class DashboardCommand : LiveTileCommand
 {
+    private protected override TileGroup Group => TileGroup.Dashboard;
+    protected override int NextRefreshMilliseconds => Dashboard.NextTileRefreshMilliseconds;
     private readonly int slot;
     protected DashboardCommand(int slot) : base($"Dashboard {slot + 1}", "Contextual dashboard. Capture stays at the first key of the second row.") { this.slot=slot; }
     protected override void RunCommand(string actionParameter) => Dashboard.Run(slot);

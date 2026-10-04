@@ -1,6 +1,8 @@
 namespace Loupedeck.MotorControlsPlugin;
 public class CaffeineCommand : LiveTileCommand
 {
+    private protected override TileGroup Group => TileGroup.Coffee;
+    protected override int NextRefreshMilliseconds => CaffeinateController.Instance.NextImageChangeMilliseconds;
     public CaffeineCommand() : base("Caffeinate", "Keep Mac and display awake for the duration chosen in Keypad settings, with remaining hours and minutes.") { }
     protected override void RunCommand(string actionParameter) { CaffeinateController.Instance.Toggle(); ActionImageChanged(); }
     protected override string ImageKey()
