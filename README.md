@@ -53,7 +53,7 @@ The optional **Claude** tab shows the status of weekly usage checks. Click **У�
 
 The sign-in command does not start a model session. You can cancel an in-progress login in the panel. This is a wrapper around Claude Code's official sign-in, not an independent OAuth client. You can also sign in separately and click **Оновити ліміти** (Refresh limits). Otherwise, checks run every 5 minutes, or every 30 minutes when authorization is missing or expired.
 
-Each usage check reads the current Claude Code authorization afresh. Background checks do not sign in, refresh credentials, invoke a model, or consume model credits. Sign-in runs only after you click its button; Claude Code manages the credential. OAuth URLs and command output are not exposed in the panel or logs.
+Each usage check reads the current Claude Code authorization afresh. With checks enabled, an expiring access token is renewed automatically and the existing Keychain entry is updated. No model is invoked and no model credits are consumed. Interactive sign-in runs only after you click its button. OAuth URLs, tokens and command output are not exposed in the panel or logs.
 
 This integration currently requires a **Claude Code Team account** and is disabled by default. A successful sign-in from the panel enables it. To enable it with an existing login instead, create the following private file outside the repository:
 
@@ -63,11 +63,11 @@ This integration currently requires a **Claude Code Team account** and is disabl
 {"claudeEnabled": true}
 ```
 
-Use **Вимкнути перевірки** (Disable checks) to stop credential reads and remove cached usage; Claude Code stays signed in. The same button enables checks again using the existing credential. Expired credentials must be renewed by Claude Code or a new official sign-in; simply launching the CLI is not guaranteed to renew them. HTTP 401, HTTP 403, and local expiry are reported separately.
+Use **Вимкнути перевірки** (Disable checks) to stop credential reads and remove cached usage; Claude Code stays signed in. The same button enables checks again using the existing credential. Access tokens renew automatically when a usable refresh token is present. If refresh is revoked or unavailable, use the official sign-in button. Simply launching the CLI is not guaranteed to renew credentials. HTTP 401, HTTP 403, and local expiry are reported separately.
 
 The usage endpoint is internal to Anthropic and may change. Other subscription plans are not supported by the current implementation. Missing or expired authorization is reported as a status, not as a fabricated quota.
 
-**Keypad button integration:** the AI and Caffeinate buttons are supplied by a separate companion Logitech plugin, which is not included in this repository. This repository contains the background helper and settings panel. It saves the selected duration and sanitized Claude usage data for that plugin to read; installing this helper alone does not create the buttons.
+**Keypad button integration:** the companion Logitech plugin source is included in [`plugin/`](plugin/README.md). It adds fixed GPT, Claude, Caffeinate, and capture buttons, with contextual controls for PrusaSlicer, Xcode, browsers, Slack, Google Meet, and Zoom. The background helper supplies brightness, duration settings, and sanitized Claude usage. Installing the helper alone does not assign the Keypad buttons; see the plugin build and installation instructions.
 
 ## Install
 
@@ -132,3 +132,23 @@ The plugin reads private `caffeine-settings.json` (`durationMinutes`, integer mi
 The Claude modules delegate official sign-in and check and sanitize usage, and `caffeine.mjs` validates the saved duration.
 
 `lib/ws` includes the WebSocket library `ws` and its license. The repository contains source code and installation defaults; current runtime state and logs are excluded from Git.
+
+## Logitech service monitoring
+
+The existing companion helper samples the official Logitech Plugin Service every **five minutes** through a short-lived native collector using macOS process APIs. It verifies the exact executable and current owner, converts Mach CPU clock units correctly on Intel and Apple Silicon, and does not launch or parse `ps`. The Logitech tab shows resident memory (RSS) immediately after a successful first check and CPU averaged over the interval; 100% means one CPU core. The first CPU value becomes available after five minutes. Two consecutive interval averages of at least 80% produce a warning in this tab. A failed sample retains the last successful readings with their timestamp and an explicit stale-data notice.
+
+The manual **Restart service** button gracefully stops only the verified Logitech Plugin Service owned by the current user and starts the official app in the background. It never force-kills a stuck process. Profiles are retained; the Keypad reconnects and CPU sampling starts a fresh interval. Repeated clicks are blocked during a restart and for 15 seconds afterward. There is **no automatic restart**, system notification, additional service, or separate Dock icon.
+
+A bounded 24-hour record is stored privately in `~/Library/Application Support/KeypadBrightness/logitech-health.json`. It contains only check times, CPU, memory and health states. No browser history, process arguments, credentials or network reporting are collected. This is a resource monitor, not a malware detector.
+
+## Verified Google Meet navigation
+
+The browser button opens a new tab in the current window and sets the entire fixed `https://meet.google.com/` address through macOS Accessibility. Navigation proceeds only after exact address readback and focus/window verification. The plugin never types URL characters through Logitech's keyboard API. Unsupported address fields fail closed. Meet page actions require the loaded document to remain on the exact HTTPS `meet.google.com` origin. The clipboard receives only a validated meeting-code URL. Google sign-in and camera/microphone permission prompts remain user actions.
+
+Browser automation can stop if you change the active window during the operation. Safari uses native address-field confirmation and has been physically confirmed in both Work and Personal profiles. Firefox uses a process-targeted Return after exact address and focus checks and has also been physically confirmed: its button creates an instant meeting and copies the validated link. Firefox containers and Chrome have not been physically verified.
+
+## Automatic Claude login renewal
+
+When usage checks are enabled, the helper renews an expiring access token within five minutes of expiry, or once after a usage HTTP 401. It sends the existing refresh token only to the fixed official Anthropic OAuth endpoint, using the original scopes and public Claude Code client ID. This makes no model requests and incurs no inference usage.
+
+Rotated tokens update only the existing Claude Code entry in macOS Keychain, never files, logs or the repository. The helper respects both current and legacy Claude Code refresh locks, maintains a heartbeat and checks that the login has not changed before saving. Disabling usage checks also stops automatic renewal. Transient failures retry in five minutes; contention retries in one minute. A revoked refresh token requires signing in again. This integration depends on an internal provider protocol and may need updates when Claude Code changes.

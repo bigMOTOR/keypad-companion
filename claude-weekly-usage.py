@@ -2,10 +2,13 @@
 """Opt-in read-only usage bridge. Credentials never leave this child process.
 
 Reads the existing Claude Code credential from macOS Keychain and sends its
-access token only to Anthropic's own usage endpoint. Does not refresh, persist,
-log, or return credentials. The parent receives allowance numbers only.
+access token only to Anthropic's own usage endpoint. Expiring credentials renew
+through the fixed official OAuth endpoint and update the existing Keychain item.
+No credentials are logged, returned or written to files. The parent receives allowance numbers only.
 """
 import datetime
+import signal
+from claude_auth import AuthError, renew
 import json
 import getpass
 import re
@@ -41,33 +44,46 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise urllib.error.HTTPError(req.full_url, code, 'redirect rejected', headers, fp)
 
 
-def read_credential(now):
-    # Early Companion logins omitted USER; Bun stored them under "unknown".
-    # Read only these two exact Claude Code accounts, never enumerate secrets.
+def read_record(account):
+    stored = subprocess.run(['/usr/bin/security', 'find-generic-password',
+                             '-s', 'Claude Code-credentials', '-a', account, '-w'],
+                            capture_output=True, timeout=8, check=False)
+    if stored.returncode: return None
+    try:
+        record = json.loads(stored.stdout)
+        return record if isinstance(record, dict) else None
+    except ValueError: return None
+
+
+def read_credential(now, force=False):
     candidates = []
     for account in dict.fromkeys([getpass.getuser(), 'unknown']):
-        stored = subprocess.run(['/usr/bin/security', 'find-generic-password',
-                                 '-s', 'Claude Code-credentials', '-a', account, '-w'],
-                                capture_output=True, timeout=8, check=False)
-        if not stored.returncode:
-            try:
-                credential = json.loads(stored.stdout).get('claudeAiOauth', {})
-                if isinstance(credential, dict):
-                    candidates.append(credential)
-            except (ValueError, AttributeError):
-                pass
-    if not candidates:
-        return {'error': 'no_authorized_credential'}
-    team = [c for c in candidates if c.get('subscriptionType') == 'team']
-    if not team:
-        return {'error': 'team_account_required'}
-    valid = [c for c in team if isinstance(c.get('accessToken'), str) and c['accessToken']
-             and isinstance(c.get('expiresAt'), (int, float))
-             and not isinstance(c['expiresAt'], bool) and math.isfinite(c['expiresAt'])
-             and c['expiresAt'] > now * 1000]
-    if not valid:
-        return {'error': 'expired_credential'}
-    return max(valid, key=lambda c: c['expiresAt'])
+        record = read_record(account)
+        credential = (record or {}).get('claudeAiOauth', {})
+        if isinstance(credential, dict) and credential:
+            candidates.append((account, credential))
+    if not candidates: return {'error': 'no_authorized_credential'}
+    team = [(a,c) for a,c in candidates if c.get('subscriptionType') == 'team']
+    if not team: return {'error': 'team_account_required'}
+    usable = [(a,c) for a,c in team if isinstance(c.get('accessToken'), str) and c['accessToken']
+              and isinstance(c.get('expiresAt'), (int, float)) and not isinstance(c['expiresAt'], bool)
+              and math.isfinite(c['expiresAt'])]
+    usable.sort(key=lambda pair: pair[1]['expiresAt'], reverse=True)
+    valid = [(a,c) for a,c in usable if c['expiresAt'] > now * 1000]
+    choices = valid or usable
+    last_error = 'expired_credential'
+    last_reason = None
+    for account, credential in choices:
+        if not force and credential['expiresAt'] > now * 1000 and (credential['expiresAt'] > (now + 300) * 1000 or not credential.get('refreshToken')):
+            return credential
+        if not credential.get('refreshToken'): continue
+        try:
+            return renew(account, credential, read_record, urllib.request.build_opener(NoRedirect), time.time, force)
+        except AuthError as error:
+            last_error = error.code
+            last_reason = error.reason
+            if error.code != 'sign_in_required': break
+    return {'error': last_error, **({'reason': last_reason} if last_reason else {})}
 
 
 def read_usage():
@@ -78,14 +94,26 @@ def read_usage():
     request = urllib.request.Request(USAGE_URL, headers={
         'Authorization': 'Bearer ' + token,
         'anthropic-beta': 'oauth-2025-04-20', 'Accept': 'application/json'})
-    with urllib.request.build_opener(NoRedirect).open(request, timeout=10) as reply:
-        payload = json.load(reply)
+    try:
+        with urllib.request.build_opener(NoRedirect).open(request, timeout=10) as reply:
+            payload = json.load(reply)
+    except urllib.error.HTTPError as error:
+        if error.code != 401: raise
+        error.close()
+        credential = read_credential(time.time(), force=True)
+        if 'error' in credential: return credential
+        request.add_header('Authorization', 'Bearer ' + credential['accessToken'])
+        with urllib.request.build_opener(NoRedirect).open(request, timeout=10) as reply:
+            payload = json.load(reply)
     return allowance(payload, time.time())
 
 
 if __name__ == '__main__':
+    signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(SystemExit(0)))
     try:
         result = read_usage()
+    except AuthError as e:
+        result = {'error': e.code}
     except urllib.error.HTTPError as e:
         result = {'error': 'sign_in_required' if e.code == 401 else 'access_denied' if e.code == 403 else 'usage_unavailable'}
     except Exception:

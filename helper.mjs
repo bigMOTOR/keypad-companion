@@ -2,6 +2,8 @@ import {LogiBrightnessClient} from './logi-client.mjs';
 import {defaultPoints,validatePoints,mapBrightness} from './brightness.mjs';
 import {createClaudeUsagePoller} from './claude-usage.mjs';
 import {defaultCaffeineMinutes,validateCaffeineMinutes} from './caffeine.mjs';
+import {createLogitechMonitor} from './logitech-monitor.mjs';
+import {createLogitechRestarter} from './logitech-restart.mjs';
 import {createClaudeLogin} from './claude-login.mjs';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
@@ -35,14 +37,16 @@ const claudeView=()=>{
   const valid=state.state==='ok'&&quota&&Number.isInteger(quota.remaining)&&quota.remaining>=0&&quota.remaining<=100&&quota.resetsAt*1000>Date.now()&&Date.now()-Date.parse(quota.updatedAt)<600000;
   return {state:state.state==='ok'&&!valid?'stale':state.state,checkedAt:state.checkedAt||null,nextCheckAt:state.nextCheckAt||null,remaining:valid?quota.remaining:null};
 };
-const view=()=>({...status,points:config.points,minimum:Math.min(...config.points.map(p=>p.keypad)),maximum:Math.max(...config.points.map(p=>p.keypad)),settleSeconds:config.settleSeconds,settling:Date.now()<settlingUntil&&status.mode==='auto',pausedUntil:pauseUntil||null,caffeineMinutes:caffeineMinutes(),claude:{...claudeView(),login:claudeLogin.view()}});
+const view=()=>({...status,points:config.points,minimum:Math.min(...config.points.map(p=>p.keypad)),maximum:Math.max(...config.points.map(p=>p.keypad)),settleSeconds:config.settleSeconds,settling:Date.now()<settlingUntil&&status.mode==='auto',pausedUntil:pauseUntil||null,caffeineMinutes:caffeineMinutes(),logitech:{...logitechMonitor.view(),restart:logitechRestarter.view()},claude:{...claudeView(),login:claudeLogin.view()}});
 const publish=()=>atomic('status.json',{...view(),updatedAt:new Date().toISOString()});
 const run=promisify(execFile);
 const privateAtomic=(name,value)=>{writeFileSync(dataFile(name+'.tmp'),JSON.stringify(value),{mode:0o600});renameSync(dataFile(name+'.tmp'),dataFile(name));};
+const logitechMonitor=createLogitechMonitor({save:value=>privateAtomic('logitech-health.json',value)});
+const logitechRestarter=createLogitechRestarter({onSuccess:async()=>{client?.close();client=null;lastApplied=null;logitechMonitor.reset();await logitechMonitor.tick();}});
 const claudeUsage=createClaudeUsagePoller({
   enabled:claudeEnabled,
   clearQuota:clearClaudeQuota,
-  fetchUsage:async()=>{const {stdout}=await run('/usr/bin/python3',[fileURLToPath(codeFile('claude-weekly-usage.py'))],{encoding:'utf8',timeout:25000,maxBuffer:16384});return JSON.parse(stdout);},
+  fetchUsage:async()=>{const {stdout}=await run('/usr/bin/python3',[fileURLToPath(codeFile('claude-weekly-usage.py'))],{encoding:'utf8',timeout:75000,maxBuffer:16384});return JSON.parse(stdout);},
   saveQuota:value=>privateAtomic('claude-quota.json',value),
   saveStatus:value=>privateAtomic('claude-usage-status.json',value)
 });
@@ -83,12 +87,18 @@ const server=createServer(async(req,res)=>{
   const json=value=>{res.setHeader('Content-Type','application/json');res.end(JSON.stringify(value));};
   if(req.method==='GET'&&req.url==='/'){res.setHeader('Content-Type','text/html; charset=utf-8');res.end(readFileSync(codeFile('settings.html'),'utf8').replace('CSRF_TOKEN',csrf));return;}
   if(req.method==='GET'&&req.url==='/status'){json(view());return;}
-  if(req.method==='POST'&&['/mode','/settings','/caffeine/settings','/claude/refresh','/claude/login','/claude/login/cancel','/claude/disable','/claude/enable'].includes(req.url)){
-    if(req.headers.origin!==origin||req.headers['x-keypad-token']!==csrf){res.writeHead(403);res.end();return;}
+  if(req.method==='GET'&&req.url==='/session'){
+    if(req.headers.origin&&req.headers.origin!==origin){res.writeHead(403);json({error:'Недозволений запит.'});return;}
+    json({token:csrf});return;
+  }
+  if(req.method==='POST'&&['/mode','/settings','/caffeine/settings','/claude/refresh','/claude/login','/claude/login/cancel','/claude/disable','/claude/enable','/logitech/restart'].includes(req.url)){
+    if(req.headers.origin!==origin||req.headers['x-keypad-token']!==csrf){res.writeHead(403);json({error:'Панель потребує оновлення після перезапуску помічника.'});return;}
     let body='';for await(const chunk of req){body+=chunk;if(body.length>4096){res.writeHead(413);res.end();return;}}
     let input;try{input=JSON.parse(body);}catch{res.writeHead(400);json({error:'Некоректні дані.'});return;}
     try{
-      if(req.url==='/caffeine/settings'){
+      if(req.url==='/logitech/restart'){
+        json({ok:true,restart:await logitechRestarter.start()});return;
+      }else if(req.url==='/caffeine/settings'){
         privateAtomic('caffeine-settings.json',{durationMinutes:validateCaffeineMinutes(input.durationMinutes)});
         json({ok:true});return;
       }else if(req.url==='/claude/login'){
@@ -123,4 +133,4 @@ server.on('error',e=>{console.error('Settings panel:',e.message);});
 server.listen(57973,'127.0.0.1');
 process.on('SIGTERM',()=>{stopping=true;claudeLogin.stop();claudeUsage.stop();client?.close();server.close();process.exit(0);});
 process.on('SIGINT',()=>{stopping=true;claudeLogin.stop();claudeUsage.stop();client?.close();server.close();process.exit(0);});
-publish();void tick();void claudeUsage.tick();setInterval(()=>{void tick();void claudeUsage.tick();},1000);
+publish();void tick();void claudeUsage.tick();void logitechMonitor.tick();setInterval(()=>{void tick();void claudeUsage.tick();void logitechMonitor.tick();},1000);

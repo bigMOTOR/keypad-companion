@@ -15,3 +15,16 @@ caffeine-settings.json
 *.key
 *.pem
 *credentials*.json
+dashboard-state.json
+caffeinate-session.json
+caffeinate-until.txt
+*.pdb
+logitech-health.json
+Keypad-buttons-*.zip
+meet-operation.json
+meet-result.json
+meet-navigation-trace.json
+meet-input-diagnostic.json
+meet-capabilities.json
+meet-controls.json
+call-capabilities.json

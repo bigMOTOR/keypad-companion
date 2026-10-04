@@ -30,7 +30,7 @@ if not app.exists():
 shutil.copy2(source / 'app/Info.plist', app / 'Contents/Info.plist')
 resources = app / 'Contents/Resources'
 resources.mkdir(parents=True, exist_ok=True)
-for name in ['helper.mjs', 'brightness.mjs', 'logi-client.mjs', 'display-brightness.py', 'settings.html', 'claude-usage.mjs', 'claude-weekly-usage.py', 'caffeine.mjs', 'claude-login.mjs']:
+for name in ['helper.mjs', 'brightness.mjs', 'logi-client.mjs', 'display-brightness.py', 'settings.html', 'claude-usage.mjs', 'claude-weekly-usage.py', 'caffeine.mjs', 'claude-login.mjs', 'logitech-monitor.mjs', 'logitech-restart.mjs', 'claude_auth.py']:
     shutil.copy2(source / name, resources / name)
 shutil.copytree(source / 'lib', resources / 'lib', dirs_exist_ok=True)
 executable = app / 'Contents/MacOS/KeypadBrightnessSettings'
@@ -38,6 +38,8 @@ executable.parent.mkdir(parents=True, exist_ok=True)
 with tempfile.TemporaryDirectory(prefix='keypad-build-') as build:
     subprocess.run(['/usr/bin/swiftc', '-O', '-module-cache-path', build,
                     str(source / 'launcher.swift'), '-o', str(executable)], check=True)
+    subprocess.run(['/usr/bin/swiftc', '-O', '-module-cache-path', build,
+                    str(source / 'logitech-health-reader.swift'), '-o', str(resources / 'logitech-health-reader')], check=True)
 config_file = runtime / 'config.json'
 if not config_file.exists() or 'points' not in json.loads(config_file.read_text()):
     shutil.copy2(source / 'config.json', config_file)

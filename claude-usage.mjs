@@ -1,6 +1,6 @@
 // Optional read-only usage polling inside the existing brightness process.
 // Only sanitized numbers and fixed error codes may reach disk or the keypad.
-const errors=new Set(['no_authorized_credential','sign_in_required','expired_credential','access_denied','team_account_required','usage_unavailable']);
+const errors=new Set(['no_authorized_credential','sign_in_required','expired_credential','access_denied','team_account_required','usage_unavailable','refresh_unavailable','refresh_in_progress','keychain_unavailable']);
 export function sanitizeUsage(input,now=Date.now()){
   if(!input||typeof input!=='object')return {error:'usage_unavailable'};
   if(input.error)return {error:errors.has(input.error)?input.error:'usage_unavailable'};
@@ -25,7 +25,7 @@ export function createClaudeUsagePoller({enabled,fetchUsage,saveQuota,clearQuota
       let result;
       try{result=sanitizeUsage(await fetchUsage(),now());}catch{result={error:'usage_unavailable'};}
       if(stopped||!enabled())return {state:'disabled',performed:false};
-      nextCheckAt=now()+(result.error&&result.error!=='usage_unavailable'?30:5)*60000;
+      nextCheckAt=now()+(result.error==='refresh_in_progress'?1:result.error&& !['usage_unavailable','refresh_unavailable','keychain_unavailable'].includes(result.error)?30:5)*60000;
       const state=result.error||'ok';
       try{
         if(result.error)clearQuota();else saveQuota(result);

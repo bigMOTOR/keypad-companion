@@ -1,0 +1,7 @@
+bin/
+obj/
+*.csproj.user
+__pycache__/
+
+# Numbered duplicate copies are not source files.
+* [0-9]*
