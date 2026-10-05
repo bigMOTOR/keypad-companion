@@ -49,7 +49,7 @@ const claudeUsage=createClaudeUsagePoller({
   enabled:claudeEnabled,
   clearQuota:clearClaudeQuota,
   readQuota:()=>{try{return JSON.parse(readFileSync(dataFile('claude-quota.json'),'utf8'));}catch{return null;}},
-  fetchUsage:async()=>{const {stdout}=await run('/usr/bin/python3',[fileURLToPath(codeFile('claude-weekly-usage.py'))],{encoding:'utf8',timeout:75000,maxBuffer:16384});return JSON.parse(stdout);},
+  fetchUsage:async(manual)=>{const {stdout}=await run('/usr/bin/python3',[fileURLToPath(codeFile('claude-weekly-usage.py')),...(manual?['--allow-keychain-ui']:[])],{encoding:'utf8',timeout:75000,maxBuffer:16384});return JSON.parse(stdout);},
   saveQuota:value=>privateAtomic('claude-quota.json',value),
   saveStatus:value=>privateAtomic('claude-usage-status.json',value)
 });

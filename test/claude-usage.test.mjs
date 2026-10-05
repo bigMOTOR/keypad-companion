@@ -84,3 +84,11 @@ test('provider cooldown overrides local retry and raw error data is not retained
  await p.tick();assert.equal(Date.parse(status.nextCheckAt)-at,600000);assert.deepEqual(Object.keys(status).sort(),['checkedAt','nextCheckAt','state']);
  assert.deepEqual(sanitizeUsage({error:'usage_unavailable',retryAfterSeconds:'secret'},at),{error:'usage_unavailable'});
 });
+
+test('background keychain failures never opt into UI; only explicit refresh permits UI',async()=>{
+ let clock=at,status,quota=good(),requests=[];
+ const p=createClaudeUsagePoller({enabled:()=>true,fetchUsage:async(manual)=>{requests.push(manual);return {error:'keychain_interaction_required'};},readQuota:()=>quota,saveQuota:v=>quota=v,clearQuota:()=>quota=null,saveStatus:v=>status=v,now:()=>clock});
+ await p.tick();assert.deepEqual(requests,[false]);assert.equal(Date.parse(status.nextCheckAt)-clock,1800000);assert.equal(quota.stale,true);
+ clock+=300000;await p.tick();assert.equal(requests.length,1);
+ await p.tick(true);assert.deepEqual(requests,[false,true]);
+});

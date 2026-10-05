@@ -7,7 +7,8 @@ import sys
 import tempfile
 import unittest
 import urllib.error
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
+from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).parents[1]))
 import claude_auth as auth
 
@@ -31,6 +32,13 @@ class AuthTests(unittest.TestCase):
         self.writes=[]
     def renew(self, response=None, read=None, **options):
         return auth.renew('owner',self.token,read or (lambda _:self.document),Opener(response or self.response),lambda:100,write=lambda a,d:self.writes.append((a,d)),lock=unlocked,**options)
+    def test_native_policy_is_process_local_and_background_fails_closed(self):
+        api=MagicMock(return_value=0)
+        with patch.object(auth.ctypes,'CDLL',return_value=SimpleNamespace(SecKeychainSetUserInteractionAllowed=api)),patch.object(auth,'_keychain_ui_allowed',False):
+            auth.keychain_ui();self.assertFalse(auth._keychain_ui_allowed);api.assert_called_with(False)
+            auth.keychain_ui(True);self.assertTrue(auth._keychain_ui_allowed);api.assert_called_with(True)
+            api.return_value=-1
+            with self.assertRaisesRegex(auth.AuthError,'keychain_unavailable'):auth.keychain_ui(False)
     def test_rotation_and_other_keychain_fields_are_preserved(self):
         fresh=self.renew();self.assertEqual(fresh['accessToken'],'new-fixture');self.assertEqual(fresh['refreshToken'],'rotated-fixture');self.assertEqual(fresh['expiresAt'],3700000)
         self.assertEqual(self.writes[0][1]['unrelated'],{'keep':True})

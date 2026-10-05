@@ -1,7 +1,7 @@
 // Optional read-only usage polling inside the existing brightness process.
 // Only sanitized numbers and fixed error codes may reach disk or the keypad.
-const errors=new Set(['no_authorized_credential','sign_in_required','expired_credential','access_denied','team_account_required','usage_unavailable','refresh_unavailable','refresh_in_progress','keychain_unavailable']);
-const temporaryErrors=new Set(['usage_unavailable','refresh_unavailable','refresh_in_progress','keychain_unavailable']);
+const errors=new Set(['no_authorized_credential','sign_in_required','expired_credential','access_denied','team_account_required','usage_unavailable','refresh_unavailable','refresh_in_progress','keychain_unavailable','keychain_interaction_required']);
+const temporaryErrors=new Set(['usage_unavailable','refresh_unavailable','refresh_in_progress','keychain_unavailable','keychain_interaction_required']);
 function cachedUsage(input,now){
   if(!input||typeof input!=='object')return null;
   const {remaining,resetsAt,updatedAt}=input,age=now-Date.parse(updatedAt);
@@ -40,11 +40,11 @@ export function createClaudeUsagePoller({enabled,fetchUsage,saveQuota,readQuota=
     if(!force&&now()<nextCheckAt)return Promise.resolve({state:'backoff',performed:false});
     active=(async()=>{
       let result;
-      try{result=sanitizeUsage(await fetchUsage(),now());}catch{result={error:'usage_unavailable'};}
+      try{result=sanitizeUsage(await fetchUsage(force),now());}catch{result={error:'usage_unavailable'};}
       if(stopped||!enabled())return {state:'disabled',performed:false};
       const temporary=temporaryErrors.has(result.error);
       temporaryFailures=temporary?temporaryFailures+1:0;
-      const delay=temporary?(temporaryFailures===1?1:temporaryFailures===2?2:5):result.error?30:5;
+      const delay=result.error==='keychain_interaction_required'?30:temporary?(temporaryFailures===1?1:temporaryFailures===2?2:5):result.error?30:5;
       nextCheckAt=now()+Math.max(delay*60000,(result.retryAfterSeconds||0)*1000);
       const state=result.error||'ok';
       try{

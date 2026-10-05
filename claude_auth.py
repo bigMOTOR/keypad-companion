@@ -15,12 +15,70 @@ import urllib.request
 
 TOKEN_URL = 'https://platform.claude.com/v1/oauth/token'
 CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
+_keychain_ui_allowed = False
 
 class AuthError(Exception):
     def __init__(self, code, reason=None):
         self.reason = reason
         self.code = code
         super().__init__(code)
+
+def keychain_ui(allowed=False):
+    # Process-local policy, not an ACL change or an unlock. Applies to reads and
+    # refresh writes; background children must fail rather than display a dialog.
+    global _keychain_ui_allowed
+    sec = ctypes.CDLL('/System/Library/Frameworks/Security.framework/Security')
+    sec.SecKeychainSetUserInteractionAllowed.argtypes = [ctypes.c_bool]
+    sec.SecKeychainSetUserInteractionAllowed.restype = ctypes.c_int32
+    if sec.SecKeychainSetUserInteractionAllowed(bool(allowed)) != 0:
+        raise AuthError('keychain_unavailable')
+    _keychain_ui_allowed = bool(allowed)
+    return sec
+
+def read_keychain(account, allow_ui=False):
+    sec = keychain_ui(allow_ui)
+    cf = ctypes.CDLL('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation')
+    ptr = ctypes.c_void_p
+    cf.CFStringCreateWithCString.argtypes = [ptr, ctypes.c_char_p, ctypes.c_uint32]
+    cf.CFStringCreateWithCString.restype = ptr
+    cf.CFDictionaryCreate.argtypes = [ptr, ptr, ptr, ctypes.c_long, ptr, ptr]
+    cf.CFDictionaryCreate.restype = ptr
+    cf.CFDataGetLength.argtypes = [ptr]; cf.CFDataGetLength.restype = ctypes.c_long
+    cf.CFDataGetBytePtr.argtypes = [ptr]; cf.CFDataGetBytePtr.restype = ptr
+    cf.CFRelease.argtypes = [ptr]
+    sec.SecItemCopyMatching.argtypes = [ptr, ctypes.POINTER(ptr)]
+    sec.SecItemCopyMatching.restype = ctypes.c_int32
+    owned = []
+    result = ptr()
+    def constant(name): return ptr.in_dll(sec, name).value
+    def string(value):
+        p = cf.CFStringCreateWithCString(None, value.encode(), 0x08000100)
+        owned.append(p); return p
+    try:
+        items = [('kSecClass', constant('kSecClassGenericPassword')),
+                 ('kSecAttrService', string('Claude Code-credentials')),
+                 ('kSecAttrAccount', string(account)),
+                 ('kSecReturnData', ptr.in_dll(cf, 'kCFBooleanTrue').value),
+                 ('kSecMatchLimit', constant('kSecMatchLimitOne'))]
+        keys = (ptr * len(items))(*[constant(k) for k, _ in items])
+        values = (ptr * len(items))(*[v for _, v in items])
+        query = cf.CFDictionaryCreate(None, keys, values, len(items),
+            ctypes.addressof(ctypes.c_byte.in_dll(cf, 'kCFTypeDictionaryKeyCallBacks')),
+            ctypes.addressof(ctypes.c_byte.in_dll(cf, 'kCFTypeDictionaryValueCallBacks')))
+        owned.append(query)
+        status = sec.SecItemCopyMatching(query, ctypes.byref(result))
+        if result.value: owned.append(result.value)
+        if status == -25300: return None  # Item absent, not a revoked login.
+        if status in (-25308, -25293, -128): raise AuthError('keychain_interaction_required')
+        if status != 0: raise AuthError('keychain_unavailable')
+        length = cf.CFDataGetLength(result)
+        if length <= 0 or length > 65536: raise AuthError('keychain_unavailable')
+        try: document = json.loads(ctypes.string_at(cf.CFDataGetBytePtr(result), length))
+        except ValueError: raise AuthError('keychain_unavailable') from None
+        return document if isinstance(document, dict) else None
+    finally:
+        for p in reversed(owned):
+            if p: cf.CFRelease(p)
 
 @contextlib.contextmanager
 def refresh_lock(directory=None):
@@ -64,7 +122,7 @@ def refresh_lock(directory=None):
 def update_keychain(account, document):
     # SecItemUpdate avoids putting credential JSON into process arguments/stdin.
     cf = ctypes.CDLL('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation')
-    sec = ctypes.CDLL('/System/Library/Frameworks/Security.framework/Security')
+    sec = keychain_ui(_keychain_ui_allowed)
     ptr = ctypes.c_void_p
     cf.CFStringCreateWithCString.argtypes = [ptr, ctypes.c_char_p, ctypes.c_uint32]
     cf.CFStringCreateWithCString.restype = ptr

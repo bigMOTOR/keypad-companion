@@ -8,12 +8,12 @@ No credentials are logged, returned or written to files. The parent receives all
 """
 import datetime
 import signal
-from claude_auth import AuthError, renew
+from claude_auth import AuthError, renew, read_keychain
 import json
 import getpass
 import re
 import math
-import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -44,25 +44,23 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise urllib.error.HTTPError(req.full_url, code, 'redirect rejected', headers, fp)
 
 
-def read_record(account):
-    stored = subprocess.run(['/usr/bin/security', 'find-generic-password',
-                             '-s', 'Claude Code-credentials', '-a', account, '-w'],
-                            capture_output=True, timeout=8, check=False)
-    if stored.returncode: return None
-    try:
-        record = json.loads(stored.stdout)
-        return record if isinstance(record, dict) else None
-    except ValueError: return None
+def read_record(account, allow_ui=False):
+    return read_keychain(account, allow_ui=allow_ui)
 
 
-def read_credential(now, force=False):
+def read_credential(now, force=False, allow_ui=False):
     candidates = []
+    blocked = None
     for account in dict.fromkeys([getpass.getuser(), 'unknown']):
-        record = read_record(account)
+        try:
+            record = read_record(account, allow_ui)
+        except AuthError as error:
+            blocked = error.code
+            continue
         credential = (record or {}).get('claudeAiOauth', {})
         if isinstance(credential, dict) and credential:
             candidates.append((account, credential))
-    if not candidates: return {'error': 'no_authorized_credential'}
+    if not candidates: return {'error': blocked or 'no_authorized_credential'}
     team = [(a,c) for a,c in candidates if c.get('subscriptionType') == 'team']
     if not team: return {'error': 'team_account_required'}
     usable = [(a,c) for a,c in team if isinstance(c.get('accessToken'), str) and c['accessToken']
@@ -78,7 +76,7 @@ def read_credential(now, force=False):
             return credential
         if not credential.get('refreshToken'): continue
         try:
-            return renew(account, credential, read_record, urllib.request.build_opener(NoRedirect), time.time, force)
+            return renew(account, credential, lambda a: read_record(a, allow_ui), urllib.request.build_opener(NoRedirect), time.time, force)
         except AuthError as error:
             last_error = error.code
             last_reason = error.reason
@@ -86,8 +84,8 @@ def read_credential(now, force=False):
     return {'error': last_error, **({'reason': last_reason} if last_reason else {})}
 
 
-def read_usage():
-    credential = read_credential(time.time())
+def read_usage(allow_ui=False):
+    credential = read_credential(time.time(), allow_ui=allow_ui)
     if 'error' in credential:
         return credential
     token = credential['accessToken']
@@ -100,7 +98,7 @@ def read_usage():
     except urllib.error.HTTPError as error:
         if error.code != 401: raise
         error.close()
-        credential = read_credential(time.time(), force=True)
+        credential = read_credential(time.time(), force=True, allow_ui=allow_ui)
         if 'error' in credential: return credential
         request.add_header('Authorization', 'Bearer ' + credential['accessToken'])
         with urllib.request.build_opener(NoRedirect).open(request, timeout=10) as reply:
@@ -121,7 +119,7 @@ def usage_error(error):
 if __name__ == '__main__':
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(SystemExit(0)))
     try:
-        result = read_usage()
+        result = read_usage(allow_ui=sys.argv[1:] == ['--allow-keychain-ui'])
     except AuthError as e:
         result = {'error': e.code}
     except urllib.error.HTTPError as e:
