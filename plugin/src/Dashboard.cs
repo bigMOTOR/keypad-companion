@@ -34,7 +34,7 @@ internal static class DashboardLayout
         return s.Context switch
         {
             "prusa" => new[] { capture, new("prusa-default", "prusa-default"), new("prusa-preview", s.Preview ? "prusa-editor" : "prusa-preview"), new("prusa-left", "prusa-left"), new("prusa-top", "prusa-top"), new("prusa-right", "prusa-right") },
-            "xcode" => new[] { capture, new("error", "error"), blank, blank, blank, blank },
+            "xcode" => new[] { capture, new("error", "error"), context, blank, blank, blank },
             "browser" => new[] { capture, last, context, blank, new("new-meet", "new-meet"), blank },
             "slack" or "meet" or "zoom" => new[] { capture, blank, blank, Call("mic", s.Mic), Call("camera", s.Camera), Call("share", s.Sharing) },
             _ => new[] { capture, last, context, blank, blank, blank }

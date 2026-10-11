@@ -7,7 +7,7 @@ A Logitech MX Keypad dashboard with Ukrainian button labels. One page stays sele
 | General | Capture / record · Last capture · AI context | Empty |
 | Safari, Firefox | Capture / record · Last capture · AI context | Empty · New Meet · Empty |
 | PrusaSlicer | Capture / record · Default view · Preview / editor | Left · Top · Right |
-| Xcode | Capture / record · Error for AI · Empty | Empty |
+| Xcode | Capture / record · Error for AI · AI context | Empty |
 | Slack, active Google Meet, or Zoom | Capture / record · Empty · Empty | Microphone · Camera · Share screen |
 
 The top row is GPT, Claude, and Caffeinate. Idle AI buttons show remaining weekly allowance. During work, the activity label replaces the large percentage; the remaining percentage and progress bar stay below it. Unknown or old usage is labelled explicitly. GPT activity reads lifecycle markers, without persisting conversation text. Caffeinate shows the real timer and reads the duration chosen in Companion settings.
