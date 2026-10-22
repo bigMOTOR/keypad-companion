@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Loupedeck.MotorControlsPlugin;
+SessionLogCursorTests.Run();
 var images=args.Length>0?args[0]:Path.Combine("plugin","src","Images");
 void Check(bool value,string message){if(!value)throw new Exception(message);}
 foreach(var context in new[]{"general","browser","prusa","xcode","slack","meet","zoom"})foreach(var recording in new[]{false,true}){

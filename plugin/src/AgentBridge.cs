@@ -10,8 +10,6 @@ internal static class AgentBridge
     private const BindingFlags Inst = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
     private const BindingFlags Stat = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
     private static object manager;
-    private static Type monitor;
-    private static bool started;
     private static int? remaining;
     private static long reset;
     private static DateTimeOffset updated, nextRefresh;
@@ -49,13 +47,11 @@ internal static class AgentBridge
         try
         {
             var plugin = Loaded("CodexDesktop"); if (plugin == null) return new("unknown");
-            monitor ??= plugin.Assembly.GetType("Loupedeck.CodexDesktopPlugin.CodexMacStateMonitor");
-            if (!started && monitor != null)
-            { monitor.GetMethod("StartStop", Stat)?.Invoke(null, null); monitor.GetMethod("StartApproval", Stat)?.Invoke(null, null); started = true; }
             if (DateTimeOffset.UtcNow >= nextRefresh && Interlocked.CompareExchange(ref refreshing, 1, 0) == 0) _ = RefreshQuota(plugin.Assembly);
+            // Lifecycle files already supply activity. Starting the vendor AX monitor
+            // here would scan windows every 400–1400 ms for unused Stop/Approval controls.
             var session = GptSessionMonitor.Read();
             if (session?.State == "work") { lock(gate) return session with { Remaining = reset > DateTimeOffset.UtcNow.ToUnixTimeSeconds() ? remaining : null }; }
-            if (session == null && monitor?.GetProperty("HasActiveTurn", Stat)?.GetValue(null) is true) return new("work", reset > DateTimeOffset.UtcNow.ToUnixTimeSeconds() ? remaining : null);
             lock (gate) return remaining.HasValue && reset > DateTimeOffset.UtcNow.ToUnixTimeSeconds()
                 ? new(DateTimeOffset.UtcNow - updated > TimeSpan.FromMinutes(10) ? "stale" : "idle", remaining, session?.SessionId) : new("unknown", SessionId: session?.SessionId);
         }
@@ -145,5 +141,4 @@ internal static class AgentBridge
         Open("/Applications/Claude.app");
     }
     private static void Open(string app) { var start = new ProcessStartInfo("/usr/bin/open") { UseShellExecute = false }; start.ArgumentList.Add("-a"); start.ArgumentList.Add(app); Process.Start(start)?.Dispose(); }
-    public static void Dispose() { if (!started) return; monitor?.GetMethod("StopStop", Stat)?.Invoke(null, null); monitor?.GetMethod("StopApproval", Stat)?.Invoke(null, null); started = false; }
 }

@@ -44,7 +44,6 @@ namespace Loupedeck.MotorControlsPlugin
             foreach (var poller in Pollers) poller.Dispose();
             Pollers.Clear();
             CaffeinateController.Instance.Dispose();
-            AgentBridge.Dispose();
         }
     }
 }
