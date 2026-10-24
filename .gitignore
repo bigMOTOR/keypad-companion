@@ -28,3 +28,7 @@ meet-input-diagnostic.json
 meet-capabilities.json
 meet-controls.json
 call-capabilities.json
+logitech-auto-restart.json
+restart-safety-request.json
+restart-safety-response.json
+Diagnostics/

@@ -58,3 +58,14 @@ test('failed restarts expose a safe message and release the busy state',async()=
   assert.equal(controller.view().state,'failed');assert.equal(controller.view().busy,false);
   assert.equal(controller.view().error.includes('sensitive'),false);
 });
+
+test('automatic restart revalidates the expected identity after its final safety guard',async()=>{
+ let service=old;const calls=[];
+ await assert.rejects(restartLogitech({uid:501,expectedIdentity:old.identity,read:async()=>service,beforeStop:async()=>{service=fresh;},execute:async file=>calls.push(file)}),/Процес змінився/);
+ assert.deepEqual(calls,[]);
+ await assert.rejects(restartLogitech({uid:501,expectedIdentity:old.identity,read:async()=>old,beforeStop:async()=>{throw new Error('blocked call');},execute:async file=>calls.push(file)}),/blocked call/);
+ assert.deepEqual(calls,[]);
+ await assert.rejects(restartLogitech({expectedIdentity:old.identity,read:async()=>null,execute:async file=>calls.push(file)}),/Процес змінився/);assert.deepEqual(calls,[]);
+});
+
+test('a safety permit expiring during process verification never reaches SIGTERM',async()=>{const calls=[];await assert.rejects(restartLogitech({uid:501,expectedIdentity:old.identity,read:async()=>old,beforeStop:async()=>({expiresAt:Date.now()-1}),execute:async file=>calls.push(file)}),/застарів/);assert.deepEqual(calls,[]);});

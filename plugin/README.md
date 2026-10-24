@@ -1,14 +1,14 @@
 # Keypad Companion plugin
 
-A Logitech MX Keypad dashboard with Ukrainian button labels. One page stays selected; its six lower buttons follow the active application. The top row and the capture button keep their positions.
+A Logitech MX Keypad dashboard with Ukrainian button labels. One page stays selected; its six lower buttons follow the active application. The top row and the capture button keep their positions. AI context stays at the right of the second row in every profile; it replaces Prusa’s Preview/editor toggle.
 
 | Context | Second row | Third row |
 | --- | --- | --- |
 | General | Capture / record · Last capture · AI context | Empty |
 | Safari, Firefox | Capture / record · Last capture · AI context | Empty · New Meet · Empty |
-| PrusaSlicer | Capture / record · Default view · Preview / editor | Left · Top · Right |
+| PrusaSlicer | Capture / record · Default view · AI context | Left · Top · Right |
 | Xcode | Capture / record · Error for AI · AI context | Empty |
-| Slack, active Google Meet, or Zoom | Capture / record · Empty · Empty | Microphone · Camera · Share screen |
+| Slack, active Google Meet, or Zoom | Capture / record · Empty · AI context | Microphone · Camera · Share screen |
 
 The top row is GPT, Claude, and Caffeinate. Idle AI buttons show remaining weekly allowance. During work, the activity label replaces the large percentage; the remaining percentage and progress bar stay below it. Unknown or old usage is labelled explicitly. GPT activity reads lifecycle markers, without persisting conversation text. Caffeinate shows the real timer and reads the duration chosen in Companion settings.
 
@@ -62,3 +62,7 @@ macOS workspace/window notifications refresh the contextual layout; file notific
 The recording counter advances locally once per second; it does not scan applications every second. Caffeinate refreshes at the next displayed minute or progress-percent boundary and on process exit. Claude's vendor session registry has no stable public event interface, so its in-memory state is checked every two seconds; quota files are decoded only after a file change or a one-minute recovery check. GPT session discovery runs on file creation/removal or once per minute and retains at most 12 recent logs. Each read is bounded to the latest 256 KiB of new data, plus at most 16 KiB of initial session metadata. Large existing conversations are never replayed from the beginning; incomplete lines wait for completion, and a skipped gap without a lifecycle marker leaves activity unknown. GPT activity uses those lifecycle markers only; Companion does not start the official plugin’s high-frequency Accessibility scanner for Stop/Approval controls. Claude integration files are checked after settings changes or once per minute and are not rewritten when unchanged.
 
 The companion helper still samples Mac display brightness once per second to retain the configured brightness response. Idle Logitech device-setting reads are cached for one minute; screen brightness changes, explicit actions and writes force fresh verification. These changes reduce unnecessary work but do not establish a particular CPU target for the combined Logitech service and its other plugins.
+
+## Automatic recovery safety
+
+The helper requests a fresh, nonce-bound safety result only when a two-hour resource check needs recovery. The plugin checks recording indicators, audio-device activity and call-capable windows/tabs without activating them. Unknown, incomplete or changed observations deny recovery. Background or unsupported clients can conservatively defer a restart; manual restart remains an explicit user action. No continuously running safety poll or extra service is added.

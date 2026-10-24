@@ -1,15 +1,22 @@
 using System.Text.Json;
 using Loupedeck.MotorControlsPlugin;
 SessionLogCursorTests.Run();
+var safetyNow=DateTimeOffset.UtcNow;
+Check(RestartSafetyResponder.ValidRequest(new string('a',32),safetyNow,safetyNow),"Fresh safety request rejected");
+Check(!RestartSafetyResponder.ValidRequest("invalid",safetyNow,safetyNow)&&!RestartSafetyResponder.ValidRequest(new string('a',32),safetyNow.AddSeconds(-16),safetyNow),"Untrusted safety request accepted");
+foreach(var flags in new[]{(true,true,false,(bool?)false,true),(true,false,true,(bool?)false,true),(true,false,false,(bool?)true,true),(true,false,false,(bool?)null,true),(false,false,false,(bool?)false,true),(true,false,false,(bool?)false,false)})
+ Check(!MacDashboard.SafetyDecision(flags.Item1,flags.Item2,flags.Item3,flags.Item4,flags.Item5).Safe,"Unsafe or unknown state permits restart");
+Check(MacDashboard.SafetyDecision(true,false,false,false,true).Safe,"Verified safe state rejected");
+Console.WriteLine("Restart safety: fresh requests only; calls, recording, audio, missing permission and incomplete observations all block recovery.");
 var images=args.Length>0?args[0]:Path.Combine("plugin","src","Images");
 void Check(bool value,string message){if(!value)throw new Exception(message);}
 foreach(var context in new[]{"general","browser","prusa","xcode","slack","meet","zoom"})foreach(var recording in new[]{false,true}){
  var tiles=DashboardLayout.Tiles(new(Context:context,Recording:recording));
- Check(tiles.Length==6,"Dashboard grid changed");Check(tiles[0].Action=="capture","Capture moved for "+context);Check(tiles[0].Image==(recording?"capture-stop":"capture"),"Recording state was lost across app change");
+ Check(tiles.Length==6,"Dashboard grid changed");Check(tiles[2].Action=="context"&&tiles[2].Image=="context","AI context moved or missing for "+context);Check(tiles[0].Action=="capture","Capture moved for "+context);Check(tiles[0].Image==(recording?"capture-stop":"capture"),"Recording state was lost across app change");
  foreach(var t in tiles)Check(File.Exists(Path.Combine(images,"dashboard-"+t.Image+".png")),"Missing tile image "+t.Image);
 }
 Check(string.Join(",",DashboardLayout.Tiles(new(Context:"browser")).Select(t=>t.Action))=="capture,last,context,,new-meet,","Browser layout differs from the accepted layout");
-Check(string.Join(",",DashboardLayout.Tiles(new(Context:"prusa")).Select(t=>t.Action))=="capture,prusa-default,prusa-preview,prusa-left,prusa-top,prusa-right","Prusa layout differs from accepted preview");
+Check(string.Join(",",DashboardLayout.Tiles(new(Context:"prusa")).Select(t=>t.Action))=="capture,prusa-default,context,prusa-left,prusa-top,prusa-right","Prusa layout differs from accepted preview");
 foreach(var context in new[]{"slack","meet","zoom"}){
  var unknown=DashboardLayout.Tiles(new(Context:context));Check(unknown[3].Image=="mic-unknown"&&unknown[4].Image=="camera-unknown"&&unknown[5].Image=="share-unknown","Unknown call state shown as on/off");
  var known=DashboardLayout.Tiles(new(Context:context,Mic:false,Camera:true,Sharing:true));Check(known[3].Image=="mic-off"&&known[4].Image=="camera-on"&&known[5].Image=="share-on","Real call state mismatch");

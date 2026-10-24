@@ -5,6 +5,7 @@ import {createClaudeUsagePoller,claudeUsageView} from './claude-usage.mjs';
 import {defaultCaffeineMinutes,validateCaffeineMinutes} from './caffeine.mjs';
 import {createLogitechMonitor} from './logitech-monitor.mjs';
 import {createLogitechRestarter} from './logitech-restart.mjs';
+import {createLogitechAutoRestart,requestRestartSafety,captureRestartDiagnostic} from './logitech-auto-restart.mjs';
 import {createClaudeLogin} from './claude-login.mjs';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
@@ -37,14 +38,23 @@ const claudeView=()=>{
   try{quota=JSON.parse(readFileSync(dataFile('claude-quota.json'),'utf8'));}catch{}
   return claudeUsageView({enabled:true,status:state,quota});
 };
-const view=()=>({...status,points:config.points,minimum:Math.min(...config.points.map(p=>p.keypad)),maximum:Math.max(...config.points.map(p=>p.keypad)),settleSeconds:config.settleSeconds,settling:Date.now()<settlingUntil&&status.mode==='auto',pausedUntil:pauseUntil||null,caffeineMinutes:caffeineMinutes(),logitech:{...logitechMonitor.view(),restart:logitechRestarter.view()},claude:{...claudeView(),login:claudeLogin.view()}});
+const view=()=>({...status,points:config.points,minimum:Math.min(...config.points.map(p=>p.keypad)),maximum:Math.max(...config.points.map(p=>p.keypad)),settleSeconds:config.settleSeconds,settling:Date.now()<settlingUntil&&status.mode==='auto',pausedUntil:pauseUntil||null,caffeineMinutes:caffeineMinutes(),logitech:{...logitechMonitor.view(),restart:logitechRestarter.view(),auto:logitechAuto.view()},claude:{...claudeView(),login:claudeLogin.view()}});
 const publish=()=>atomic('status.json',{...view(),updatedAt:new Date().toISOString()});
 const run=promisify(execFile);
 const brightnessCache=createBrightnessCache();
 let observedScreen=null;
 const privateAtomic=(name,value)=>{writeFileSync(dataFile(name+'.tmp'),JSON.stringify(value),{mode:0o600});renameSync(dataFile(name+'.tmp'),dataFile(name));};
-const logitechMonitor=createLogitechMonitor({save:value=>privateAtomic('logitech-health.json',value)});
-const logitechRestarter=createLogitechRestarter({onSuccess:async()=>{client?.close();client=null;lastApplied=null;brightnessCache.reset();logitechMonitor.reset();await logitechMonitor.tick();}});
+let logitechAuto;
+const logitechMonitor=createLogitechMonitor({save:value=>privateAtomic('logitech-health.json',value),onCheck:(sample,started)=>logitechAuto?.consider(sample,started)});
+const logitechRestarter=createLogitechRestarter({onSuccess:async(options={})=>{client?.close();client=null;lastApplied=null;brightnessCache.reset();logitechMonitor.reset();if(options.automatic!==true)logitechAuto?.manualRestarted();}});
+logitechAuto=createLogitechAutoRestart({
+  enabled:()=>config.logitechAutomaticRestart!==false,
+  guard:sample=>requestRestartSafety(dataRoot,sample),
+  diagnose:sample=>captureRestartDiagnostic(dataRoot,sample),
+  restart:(sample,beforeStop)=>logitechRestarter.start({automatic:true,expectedIdentity:sample.identity,beforeStop}),
+  load:()=>{try{return JSON.parse(readFileSync(dataFile('logitech-auto-restart.json'),'utf8'));}catch{return null;}},
+  save:value=>privateAtomic('logitech-auto-restart.json',value)
+});
 const claudeUsage=createClaudeUsagePoller({
   enabled:claudeEnabled,
   clearQuota:clearClaudeQuota,
@@ -99,13 +109,16 @@ const server=createServer(async(req,res)=>{
     if(req.headers.origin&&req.headers.origin!==origin){res.writeHead(403);json({error:'Недозволений запит.'});return;}
     json({token:csrf});return;
   }
-  if(req.method==='POST'&&['/mode','/settings','/caffeine/settings','/claude/refresh','/claude/login','/claude/login/cancel','/claude/disable','/claude/enable','/logitech/restart'].includes(req.url)){
+  if(req.method==='POST'&&['/mode','/settings','/caffeine/settings','/claude/refresh','/claude/login','/claude/login/cancel','/claude/disable','/claude/enable','/logitech/restart','/logitech/automatic'].includes(req.url)){
     if(req.headers.origin!==origin||req.headers['x-keypad-token']!==csrf){res.writeHead(403);json({error:'Панель потребує оновлення після перезапуску помічника.'});return;}
     let body='';for await(const chunk of req){body+=chunk;if(body.length>4096){res.writeHead(413);res.end();return;}}
     let input;try{input=JSON.parse(body);}catch{res.writeHead(400);json({error:'Некоректні дані.'});return;}
     try{
       if(req.url==='/logitech/restart'){
         json({ok:true,restart:await logitechRestarter.start()});return;
+      }else if(req.url==='/logitech/automatic'){
+        if(typeof input.enabled!=='boolean')throw new Error('Некоректне налаштування.');
+        loadConfig();config.logitechAutomaticRestart=input.enabled;atomic('config.json',config);json({ok:true});return;
       }else if(req.url==='/caffeine/settings'){
         privateAtomic('caffeine-settings.json',{durationMinutes:validateCaffeineMinutes(input.durationMinutes)});
         json({ok:true});return;

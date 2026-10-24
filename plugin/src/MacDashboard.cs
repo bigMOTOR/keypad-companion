@@ -6,7 +6,7 @@ using System.Text.RegularExpressions;
 namespace Loupedeck.MotorControlsPlugin;
 
 // Apple system frameworks only: runs inside the already-authorized Logitech host.
-internal static class MacDashboard
+internal static partial class MacDashboard
 {
     private const string ObjC="/usr/lib/libobjc.A.dylib", CF="/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", AX="/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices";
     private const ulong Cmd=1UL<<20, Shift=1UL<<17, Ctrl=1UL<<18;

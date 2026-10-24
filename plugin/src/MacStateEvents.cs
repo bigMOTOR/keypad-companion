@@ -15,6 +15,7 @@ internal static class MacStateEvents
     private static volatile bool stopping;
     private static int rebind;
     private static long workspaceEvents,windowEvents;
+    internal static long SafetyGeneration=>Interlocked.Read(ref workspaceEvents)+Interlocked.Read(ref windowEvents);
     internal static object Diagnostics=>new { listening=loop!=IntPtr.Zero,workspaceEvents=Interlocked.Read(ref workspaceEvents),windowEvents=Interlocked.Read(ref windowEvents) };
     private static IntPtr loop,center,listener,observer,root,window,keepAlive;
     private static int observedPid;
