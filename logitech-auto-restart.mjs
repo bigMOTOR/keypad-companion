@@ -22,7 +22,7 @@ export async function requestRestartSafety(directory,expected,{now=Date.now,wait
       if(statSync(replyFile).size>4096)throw new Error('oversized reply');
       const reply=JSON.parse(readFileSync(replyFile,'utf8')),age=now()-Date.parse(reply.checkedAt);
       if(reply.nonce===nonce&&reply.hostPid===expected.pid&&Number.isFinite(age)&&age>=-1000&&age<=2000){
-        const reason=['call','recording','audio','unavailable'].includes(reply.reason)?reply.reason:'unavailable';
+        const reason=['recording','unavailable'].includes(reply.reason)?reply.reason:'unavailable';
         return reply.safe===true&&reply.reason==='safe'?{safe:true}:{safe:false,reason};
       }
     }catch{}

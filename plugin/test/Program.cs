@@ -4,10 +4,10 @@ SessionLogCursorTests.Run();
 var safetyNow=DateTimeOffset.UtcNow;
 Check(RestartSafetyResponder.ValidRequest(new string('a',32),safetyNow,safetyNow),"Fresh safety request rejected");
 Check(!RestartSafetyResponder.ValidRequest("invalid",safetyNow,safetyNow)&&!RestartSafetyResponder.ValidRequest(new string('a',32),safetyNow.AddSeconds(-16),safetyNow),"Untrusted safety request accepted");
-foreach(var flags in new[]{(true,true,false,(bool?)false,true),(true,false,true,(bool?)false,true),(true,false,false,(bool?)true,true),(true,false,false,(bool?)null,true),(false,false,false,(bool?)false,true),(true,false,false,(bool?)false,false)})
- Check(!MacDashboard.SafetyDecision(flags.Item1,flags.Item2,flags.Item3,flags.Item4,flags.Item5).Safe,"Unsafe or unknown state permits restart");
-Check(MacDashboard.SafetyDecision(true,false,false,false,true).Safe,"Verified safe state rejected");
-Console.WriteLine("Restart safety: fresh requests only; calls, recording, audio, missing permission and incomplete observations all block recovery.");
+Check(!MacDashboard.SafetyDecision(true,true).Safe,"Recording permits restart");
+Check(!MacDashboard.SafetyDecision(false,false).Safe,"Missing recording permission permits restart");
+Check(MacDashboard.SafetyDecision(true,false).Safe,"No recording should allow restart, independently of calls or audio");
+Console.WriteLine("Restart safety: fresh requests and recording protection; no call or audio veto.");
 var images=args.Length>0?args[0]:Path.Combine("plugin","src","Images");
 void Check(bool value,string message){if(!value)throw new Exception(message);}
 foreach(var context in new[]{"general","browser","prusa","xcode","slack","meet","zoom"})foreach(var recording in new[]{false,true}){

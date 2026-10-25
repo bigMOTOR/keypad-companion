@@ -16,14 +16,14 @@ test('arming delay, repeated measurement, diagnostics and final fresh guard prec
  await f.policy.consider(high);assert.equal(f.calls.filter(s=>s==='restart').length,1);
  f.advance();await f.policy.consider(high);assert.equal(f.policy.view().state,'needs-attention');assert.equal(f.calls.filter(s=>s==='restart').length,1);
 });
-test('calls, recording, active audio and unknown state each block before confirmation',async()=>{
- for(const reason of ['call','recording','audio','unavailable']){
+test('recording and unknown recording state block before confirmation',async()=>{
+ for(const reason of ['recording','unavailable']){
   const f=fixture({guard:async()=>({safe:false,reason})});f.advance();await f.policy.consider(high);assert.equal(f.policy.view().state,'deferred');assert.equal(f.policy.view().reason,reason);assert.deepEqual(f.calls,[]);
  }
 });
-test('a call starting during confirmation or after diagnostics prevents termination',async()=>{
+test('a recording starting during confirmation or after diagnostics prevents termination',async()=>{
  for(const deniedAt of [2,3]){
-  let checks=0;const f=fixture({guard:async()=>++checks===deniedAt?{safe:false,reason:'call'}:{safe:true}});f.advance();await f.policy.consider(high);assert.equal(f.calls.includes('restart'),false);
+  let checks=0;const f=fixture({guard:async()=>++checks===deniedAt?{safe:false,reason:'recording'}:{safe:true}});f.advance();await f.policy.consider(high);assert.equal(f.calls.includes('restart'),false);
  }
 });
 test('transient load, changed PID, disabled recovery or failed diagnostics cannot cause a restart',async()=>{
